@@ -5,8 +5,11 @@ begin
   require 'jeweler'
   Jeweler::Tasks.new do |gem|
     gem.name = "http_parser"
-    gem.summary = %Q{TODO: one-line summary of your gem}
-    gem.description = %Q{TODO: longer description of your gem}
+    gem.summary = %Q{HTTP Parser Library}
+    gem.description = %Q{This gem provides a (hopefully) high quality http parser library that can
+    build request information iteratively as data comes over the line without
+    requiring the caller to maintain the entire body of the request as a single
+    string in memory.}
     gem.email = "graham@stormbrew.ca"
     gem.homepage = "http://github.com/stormbrew/http_parser"
     gem.authors = ["Graham Batty"]
