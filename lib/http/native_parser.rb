@@ -1,5 +1,6 @@
 require 'stringio'
 require 'tempfile'
+require 'strscan'
 
 module Http
   # This is a native ruby implementation of the http parser. It is also
@@ -84,70 +85,71 @@ module Http
     # allows you to iteratively pass data into the parser as it comes from
     # the client.
     def parse!(str)
-      loop do
-        case @state
-        when :request_line
-          if (m = RequestLineMatch.match(str))
-            @method = m[1]
-            @path = m[2]
-            @version = [m[3].to_i,m[4].to_i]
+      scanner = StringScanner.new(str)
+      begin
+        loop do
+          case @state
+          when :request_line
+            if (scanner.scan(RequestLineMatch))
+              @method = scanner[1]
+              @path = scanner[2]
+              @version = [scanner[3].to_i, scanner[4].to_i]
           
-            str[0, m[0].length] = ""
-          
-            @state = :headers
-          else
-            return str
-          end
-        when :headers
-          if (m = HeaderLineMatch.match(str))
-            header = normalize_header(m[1])
-            @headers[header] = m[2]
-            @last_header = header
-          elsif (@last_header && m = HeaderContinueMatch.match(str))
-            @headers[@last_header] << " " << m[1]
-          elsif (m = HeaderEndMatch.match(str))
-            if (has_body?)
-              if (!@headers["CONTENT_LENGTH"])
-                raise ParserError::LengthRequired
-              end
-              @body_length = @headers["CONTENT_LENGTH"].to_i
-              if (@body_length > 0)
-                @state = :body
+              @state = :headers
+            else
+              return str
+            end
+          when :headers
+            if (scanner.scan(HeaderLineMatch))
+              header = normalize_header(scanner[1])
+              @headers[header] = scanner[2]
+              @last_header = header
+            elsif (@last_header && scanner.scan(HeaderContinueMatch))
+              @headers[@last_header] << " " << scanner[1]
+            elsif (scanner.scan(HeaderEndMatch))
+              if (has_body?)
+                if (!@headers["CONTENT_LENGTH"])
+                  raise ParserError::LengthRequired
+                end
+                @body_length = @headers["CONTENT_LENGTH"].to_i
+                if (@body_length > 0)
+                  @state = :body
+                else
+                  @state = :done
+                end
+                if (@body_length >= @options[:min_tempfile_size])
+                  @body = @options[:tempfile_class].new("http_parser")
+                  @body.unlink # unlink immediately so we don't rely on the caller to do it.
+                else
+                  @body = StringIO.new
+                end
               else
                 @state = :done
               end
-              if (@body_length >= @options[:min_tempfile_size])
-                @body = @options[:tempfile_class].new("http_parser")
-                @body.unlink # unlink immediately so we don't rely on the caller to do it.
-              else
-                @body = StringIO.new
-              end
             else
+              return str
+            end
+          when :body
+            remain = @body_length - @body.length
+            addition = scanner.scan(%r|.{0,#{remain}}|)
+            @body << addition
+
+            if (@body.length >= @body_length)
+              @body.rewind
               @state = :done
             end
-          end
-          if (m)
-            str[0, m[0].length] = ""
-          else
+            # We either consumed everything we need or we
+            # ran the string dry trying, so we always return the
+            # input string
             return str
-          end
-        when :body
-          addition = str[0, @body_length - @body.length]
-          @body << addition
-          str[0, addition.length] = ""
-
-          if (@body.length >= @body_length)
-            @body.rewind
-            @state = :done
-          end
-          # We either consumed everything we need or we
-          # ran the string dry trying, so we always return the
-          # input string
-          return str
           
-        when :done
-          return str # Just ignore any input once a request is done.
+          when :done
+            return str # Just ignore any input once a request is done.
+          end
         end
+      ensure
+        # clear out whatever we managed to scan.
+        str[0, scanner.pos] = ""
       end
     end
     
