@@ -1,0 +1,178 @@
+require 'stringio'
+require 'tempfile'
+
+module Http
+  # This is a native ruby implementation of the http parser. It is also
+  # the reference implementation for this library. Later there will be one
+  # written in C for performance reasons, and it will have to pass the same
+  # specs as this one.
+  class NativeParser
+    # The HTTP method string used. Will always be a string and all-capsed.
+    # Valid values are: "GET", "HEAD", "POST", "PUT", "DELETE".
+    # Other values will cause an exception since then we don't know
+    # whether the request has a body.
+    attr_reader :method
+    
+    # The path given by the client as a string. No processing is done on
+    # this and nearly anything is considered valid.
+    attr_reader :path
+    
+    # The HTTP version of the request as an array of two integers.
+    # [1,0] and [1,1] are the most likely values currently.
+    attr_reader :version
+    
+    # A hash of headers passed to the server with the request. All
+    # headers will be normalized to ALLCAPS_WITH_UNDERSCORES for
+    # consistency's sake.
+    attr_reader :headers
+    
+    # The body of the request as a stream object. May be either
+    # a StringIO or a TempFile, depending on request length.
+    attr_reader :body
+    
+    # The default set of parse options for the request.
+    DefaultOptions = {
+      # maximum length of an individual header line.
+      :max_header_length => 10240, 
+      # maximum number of headers that can be passed to the server
+      :max_headers => 100,
+      # the size of the request body before it will be spilled
+      # to a tempfile instead of being stored in memory.
+      :min_tempfile_size => 1048576,
+      # the class to use to create and manage the temporary file.
+      # Must conform to the same interface as the stdlib Tempfile class
+      :tempfile_class => Tempfile,
+    }
+    
+    # Regex used to match the Request-Line
+    RequestLineMatch = %r{^([a-zA-Z]+) (.+) HTTP/([0-9]+)\.([0-9]+)\r?\n}
+    # Regex used to match a header line. Lines suspected of
+    # being headers are also checked against the HeaderContinueMatch
+    # to deal with multiline headers
+    HeaderLineMatch = %r{^([a-zA-Z-]+): ([^[:cntrl:]]+)\r?\n}
+    HeaderContinueMatch = %r{^[ \t]([^[:cntrl:]]+)\r?\n}
+    HeaderEndMatch = %r{^\r?\n}
+    
+    def initialize(options = DefaultOptions)
+      @method = nil
+      @path = nil
+      @version = nil
+      @headers = {}
+      @body = nil
+      @state = :request_line
+      @options = options
+    end
+    
+    # Returns true if the http method being parsed (if
+    # known at this point in the parse) should have a body.
+    # If the method hasn't been determined yet, returns false.
+    def has_body?
+      ["POST","PUT"].include?(@method)
+    end
+    
+    # Takes a string and runs it through the parser. Note that
+    # it does not consume anything it can't completely parse, so
+    # you should always pass complete request chunks (lines or body data)
+    # to this method. It's mostly for testing and convenience.
+    # In practical use, you want to use parse!, which will remove parsed
+    # data from the string you pass in.
+    def parse(str)
+      parse!(str.dup)
+    end
+    
+    # Consumes as much of str as it can and then removes it from str. This
+    # allows you to iteratively pass data into the parser as it comes from
+    # the client.
+    def parse!(str)
+      loop do
+        case @state
+        when :request_line
+          if (m = RequestLineMatch.match(str))
+            @method = m[1]
+            @path = m[2]
+            @version = [m[3].to_i,m[4].to_i]
+          
+            str[0, m[0].length] = ""
+          
+            @state = :headers
+          else
+            return str
+          end
+        when :headers
+          if (m = HeaderLineMatch.match(str))
+            header = normalize_header(m[1])
+            @headers[header] = m[2]
+            @last_header = header
+          elsif (@last_header && m = HeaderContinueMatch.match(str))
+            @headers[@last_header] << " " << m[1]
+          elsif (m = HeaderEndMatch.match(str))
+            if (has_body?)
+              if (!@headers["CONTENT_LENGTH"])
+                raise ParserError::LengthRequired
+              end
+              @body_length = @headers["CONTENT_LENGTH"].to_i
+              if (@body_length > 0)
+                @state = :body
+              else
+                @state = :done
+              end
+              if (@body_length >= @options[:min_tempfile_size])
+                @body = @options[:tempfile_class].new("http_parser")
+                @body.unlink # unlink immediately so we don't rely on the caller to do it.
+              else
+                @body = StringIO.new
+              end
+            else
+              @state = :done
+            end
+          end
+          if (m)
+            str[0, m[0].length] = ""
+          else
+            return str
+          end
+        when :body
+          addition = str[0, @body_length - @body.length]
+          @body << addition
+          str[0, addition.length] = ""
+
+          if (@body.length >= @body_length)
+            @body.rewind
+            @state = :done
+          end
+          # We either consumed everything we need or we
+          # ran the string dry trying, so we always return the
+          # input string
+          return str
+          
+        when :done
+          return str # Just ignore any input once a request is done.
+        end
+      end
+    end
+    
+    # Normalizes a header name to be UPPERCASE_WITH_UNDERSCORES
+    def normalize_header(str)
+      str.upcase.gsub('-', '_')
+    end
+    private :normalize_header
+    
+    # Returns true if the request is completely done.
+    def done?
+      @state == :done
+    end
+    
+    # Returns true if the request has parsed the request-line (GET / HTTP/1.1) 
+    def done_request_line?
+      [:headers, :body, :done].include?(@state)
+    end
+    # Returns true if all the headers from the request have been consumed.
+    def done_headers?
+      [:body, :done].include?(@state)
+    end
+    # Returns true if the request's body has been consumed (really the same as done?)
+    def done_body?
+      done?
+    end
+  end
+end
