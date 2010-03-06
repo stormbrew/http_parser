@@ -49,8 +49,8 @@ module Http
     # Regex used to match a header line. Lines suspected of
     # being headers are also checked against the HeaderContinueMatch
     # to deal with multiline headers
-    HeaderLineMatch = %r{^([a-zA-Z-]+): ([^[:cntrl:]]+)\r?\n}
-    HeaderContinueMatch = %r{^[ \t]([^[:cntrl:]]+)\r?\n}
+    HeaderLineMatch = %r{^([a-zA-Z-]+):[ \t]*([[:print:]]+)\r?\n}
+    HeaderContinueMatch = %r{^[ \t]+([[:print:]]+)\r?\n}
     HeaderEndMatch = %r{^\r?\n}
     
     def initialize(options = DefaultOptions)
@@ -60,7 +60,7 @@ module Http
       @headers = {}
       @body = nil
       @state = :request_line
-      @options = options
+      @options = DefaultOptions.merge(options)
     end
     
     # Returns true if the http method being parsed (if
