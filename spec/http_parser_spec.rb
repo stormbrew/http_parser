@@ -33,7 +33,7 @@ test_parsers.each do |parser|
     	p.headers["COOKIE"].should == "blorp=blah"
   	end
   	
-  	it "Should be able to parse a request with a body (ie. PUT)" do
+  	it "Should be able to parse a request with a body defined by a Content-Length (ie. PUT)" do
   	  p = parser.new
     	p.parse("PUT / HTTP/1.1\r\n")
     	p.parse("Host: blah.com\r\n")
