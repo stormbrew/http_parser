@@ -96,6 +96,10 @@ module Http
               @version = [scanner[3].to_i, scanner[4].to_i]
           
               @state = :headers
+              
+              if (!["OPTIONS","GET","HEAD","POST","PUT","DELETE","TRACE","CONNECT"].include?(@method))
+                raise Http::ParserError::NotImplemented
+              end
             else
               return str
             end
@@ -131,8 +135,10 @@ module Http
             end
           when :body
             remain = @body_length - @body.length
-            addition = scanner.scan(%r|.{0,#{remain}}|)
+            addition = str[scanner.pos, remain]
             @body << addition
+            
+            scanner.pos += addition.length
 
             if (@body.length >= @body_length)
               @body.rewind
