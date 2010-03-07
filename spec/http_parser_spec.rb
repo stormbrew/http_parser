@@ -18,7 +18,7 @@ end
 
 test_parsers.each do |parser|
   describe parser do
-    it "Should be able to parse a simple GET request" do
+    it "should be able to parse a simple GET request" do
       p = parser.new
     	p.parse("GET / HTTP/1.1\r\n")
     	p.parse("Host: blah.com\r\n")
@@ -33,7 +33,14 @@ test_parsers.each do |parser|
     	p.headers["COOKIE"].should == "blorp=blah"
   	end
   	
-  	it "Should be able to parse a request with a body defined by a Content-Length (ie. PUT)" do
+    it "should raise an error on a malformed version string" do
+      p = parser.new
+      proc {
+        p.parse("GET / HTTx/balh.blorp\r\n")
+      }.should raise_error(Http::ParserError::BadRequest)
+    end
+    
+  	it "should be able to parse a request with a body defined by a Content-Length (ie. PUT)" do
   	  p = parser.new
     	p.parse("PUT / HTTP/1.1\r\n")
     	p.parse("Host: blah.com\r\n")
@@ -45,15 +52,20 @@ test_parsers.each do |parser|
     	p.body.read.should == "stuff"
   	end
   	
-  	it "should raise an error if a POST or PUT request has neither Content-Length, nor Transfer-Encoding: chunked set" do
+  	it "should be able to parse a request with a body defined by Transfer-Encoding: chunked" do
   	  p = parser.new
-  	  proc {
-  	    p.parse <<REQ
+  	  p.parse(<<REQ)
 POST / HTTP/1.1\r
 Host: blah.com\r
+Transfer-Encoding: chunked\r
+\r
+10\r
+stuffstuff
+0\r
 \r
 REQ
-	    }.should raise_error(Http::ParserError::LengthRequired)
+      p.done?.should be_true
+      p.body.read.should == "stuffstuff"
     end
     
     it "should deal with a properly set 0 length body on a PUT/POST request" do
@@ -68,7 +80,7 @@ REQ
       p.body.read.should == ""
     end
     
-    it "should handle a body that's too long to store in memory by putting it out to a tempfile." do
+    it "should handle a body that's too long to store in memory with a Content-Length by putting it out to a tempfile." do
       p = parser.new(:min_tempfile_size => 1024)
       p.parse <<REQ
 POST / HTTP/1.1\r
@@ -80,6 +92,24 @@ REQ
       p.done?.should be_true
       p.body.should be_kind_of(Tempfile)
       p.body.read.should == "x" * 2048
+    end
+    
+    it "should handle a body that's too long to store in memory with a Transfer-Encoding of chunked by putting it out to a tempfile" do
+      p = parser.new(:min_tempfile_size => 1024)
+      p.parse <<REQ
+POST / HTTP/1.1\r
+Host: blah.com\r
+Transfer-Encoding: chunked\r
+\r
+REQ
+      1.upto(200) do
+        p.parse("10\r\n")
+        p.parse("x"*10)
+      end
+      p.parse("0\r\n\r\n")
+      p.done?.should be_true
+      p.body.should be_kind_of(Tempfile)
+      p.body.read.should == "x" * 2000
     end
   	
   	it "Should be able to incrementally parse a request with arbitrarily placed string endings" do
@@ -115,8 +145,28 @@ REQ
     	p.done?.should be_true
   	end
   	
-  	describe "RFC2616 sec 4.2" do
-    	it "Should ignore leading spaces on header values" do
+  	describe "RFC2616 sec 3.1 (HTTP Version)" do
+  	  it "MUST accept arbitrary numbers for the version string" do
+  	    p = parser.new
+  	    p.parse("GET / HTTP/12.3445\r\n")
+  	    
+  	    p.done_request_line?.should be_true
+  	    p.version.should == [12,3445]
+	    end
+    end
+    
+    describe "RFC2616 sec 4.1 (Message Type)" do
+      it "SHOULD ignore leading whitespace lines before a request-line" do
+        p = parser.new
+        p.parse("\r\n")
+        p.parse("GET / HTTP/1.1\r\n")
+        
+        p.done_request_line?.should be_true
+      end
+    end     
+  	
+  	describe "RFC2616 sec 4.2 (Message Headers)" do
+    	it "MUST ignore leading spaces on header values" do
   	    p = parser.new
   	    p.parse("GET / HTTP/1.1\r\n")
   	    p.parse("Blah:    wat?\r\n")
@@ -126,7 +176,7 @@ REQ
   	    p.headers["BLAH"].should == "wat?"
       end
   	
-    	it "Should be able to handle a header that spans more then one line" do
+    	it "MUST be able to handle a header that spans more then one line" do
     	  p = parser.new
     	  p.parse("GET / HTTP/1.1\r\n")
     	  p.parse("Blah: blorp\r\n")
@@ -137,7 +187,7 @@ REQ
     	  p.headers["BLAH"].should == "blorp woop"
   	  end
 
-    	it "should ignore any amount of leading whitespace on multiline headers" do
+    	it "MUST ignore any amount of leading whitespace on multiline headers" do
     	  p = parser.new
     	  p.parse("GET / HTTP/1.1\r\n")
     	  p.parse("Blah: blorp\r\n")
@@ -147,6 +197,117 @@ REQ
     	  p.done?.should be_true
     	  p.headers["BLAH"].should == "blorp woop"
   	  end
+  	  
+  	  it "MUST be able to merge multiple headers into one comma separated header with order preserved" do
+  	    p = parser.new
+  	    p.parse("GET / HTTP/1.1\r\n")
+  	    p.parse("Blah: blorp\r\n")
+  	    p.parse("Blah: woop\r\n")
+  	    p.parse("Woop: bloop\r\n")
+  	    p.parse("Woop: noop\r\n")
+  	    p.parse("\r\n")
+  	    
+  	    p.done?.should be_true
+  	    p.headers["BLAH"].should == "blorp,woop"
+  	    p.headers["WOOP"].should == "bloop,noop"
+	    end
 	  end
+	  
+	  describe "RFC2616 sec 4.3 (Message Body)" do
+      ["GET","DELETE","HEAD","TRACE","CONNECT"].each do |method|
+  	    it "MUST NOT require a body on #{method} requests" do
+  	      p = parser.new
+  	      p.parse("#{method} / HTTP/1.1\r\n")
+  	      p.parse("Host: blah.com\r\n")
+  	      p.parse("\r\n")
+  	      
+  	      p.done?.should be_true
+  	      p.body.should be_nil
+	      end
+
+  	    it "SHOULD accept (but ignore) a message body on #{method} requests" do
+  	      p = parser.new
+  	      p.parse("#{method} / HTTP/1.1\r\n")
+  	      p.parse("Content-Length: 5\r\n")
+  	      p.parse("\r\n")
+  	      p.parse("stuff")
+
+  	      p.done?.should be_true
+  	      p.headers["CONTENT_LENGTH"].should == "5"
+  	      p.body.should_not be_nil
+  	      p.body.read.should == ""
+        end
+      end
+      
+      ["POST","PUT"].each do |method|
+        it "MUST accept a body on #{method} requests" do
+          p = parser.new
+          p.parse("#{method} / HTTP/1.1\r\n")
+          p.parse("Content-Length: 5\r\n")
+          p.parse("\r\n")
+          p.parse("stuff")
+          
+          p.done?.should be_true
+          p.body.should_not be_nil
+          p.body.read.should == "stuff"
+        end
+        
+        it "MUST require a body on #{method} requests" do
+          p = parser.new
+          proc {
+            p.parse("#{method} / HTTP/1.1\r\n")
+            p.parse("Host: blah.com\r\n")
+            p.parse("\r\n")
+          }.should raise_error(Http::ParserError::LengthRequired)
+        end
+      end
+      
+      it "SHOULD accept and allow a body on OPTIONS requests" do
+        p = parser.new
+        p.parse("OPTIONS / HTTP/1.1\r\n")
+        p.parse("Content-Length: 5\r\n")
+        p.parse("\r\n")
+        p.parse("stuff")
+        
+        p.done?.should be_true
+        p.body.should_not be_nil
+        p.body.read.should == "stuff"
+      end
+      
+      it "MUST accept an OPTIONS request with no body" do
+        p = parser.new
+        p.parse("OPTIONS / HTTP/1.1\r\n")
+        p.parse("\r\n")
+        
+        p.done?.should be_true
+        p.body.should be_nil
+      end
+      
+      it "MUST choose chunked-encoding length over content-length header" do
+        p = parser.new
+        p.parse(<<REQ)
+POST / HTTP/1.1\r
+Content-Length: 5
+Transfer-Encoding: chunked
+
+10
+stuffstuff
+0
+
+REQ
+        p.done?.should be_true
+        p.body.should_not be_nil
+        p.body.read.should == "stuffstuff"
+      end
+    end
+    
+    describe "RFC2616 sec 5.1" do
+      it "SHOULD raise a 501 error if given an unrecognized method" do
+        p = parser.new
+        proc {
+          p.parse("OOGABOOGAH / HTTP/1.1\r\n")
+        }.should raise_error(Http::ParserError::NotImplemented)
+      end
+    end      
   end
 end
