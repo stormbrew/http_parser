@@ -81,76 +81,83 @@ module Http
       parse!(str.dup)
     end
     
+    def parse_request_line(scanner)
+      if (scanner.scan(RequestLineMatch))
+        @method = scanner[1]
+        @path = scanner[2]
+        @version = [scanner[3].to_i, scanner[4].to_i]
+    
+        @state = :headers
+        
+        if (!["OPTIONS","GET","HEAD","POST","PUT","DELETE","TRACE","CONNECT"].include?(@method))
+          raise Http::ParserError::NotImplemented
+        end
+      end
+    end
+    private :parse_request_line
+    
+    def parse_headers(scanner)
+      if (scanner.scan(HeaderLineMatch))
+        header = normalize_header(scanner[1])
+        @headers[header] = scanner[2]
+        @last_header = header
+      elsif (@last_header && scanner.scan(HeaderContinueMatch))
+        @headers[@last_header] << " " << scanner[1]
+      elsif (scanner.scan(HeaderEndMatch))
+        if (has_body?)
+          if (!@headers["CONTENT_LENGTH"])
+            raise ParserError::LengthRequired
+          end
+          @body_length = @headers["CONTENT_LENGTH"].to_i
+          if (@body_length > 0)
+            @state = :body
+          else
+            @state = :done
+          end
+          if (@body_length >= @options[:min_tempfile_size])
+            @body = @options[:tempfile_class].new("http_parser")
+            @body.unlink # unlink immediately so we don't rely on the caller to do it.
+          else
+            @body = StringIO.new
+          end
+        else
+          @state = :done
+        end
+      end      
+    end
+    private :parse_headers
+    
+    def parse_body(scanner)
+      remain = @body_length - @body.length
+      addition = scanner.string[scanner.pos, remain]
+      @body << addition
+      
+      scanner.pos += addition.length
+
+      if (@body.length >= @body_length)
+        @body.rewind
+        @state = :done
+      end
+    end
+    private :parse_body
+    
+    def parse_done(scanner)
+      # do nothing, the parse is done.
+    end
+    private :parse_body
+    
     # Consumes as much of str as it can and then removes it from str. This
     # allows you to iteratively pass data into the parser as it comes from
     # the client.
     def parse!(str)
       scanner = StringScanner.new(str)
       begin
-        loop do
-          case @state
-          when :request_line
-            if (scanner.scan(RequestLineMatch))
-              @method = scanner[1]
-              @path = scanner[2]
-              @version = [scanner[3].to_i, scanner[4].to_i]
-          
-              @state = :headers
-              
-              if (!["OPTIONS","GET","HEAD","POST","PUT","DELETE","TRACE","CONNECT"].include?(@method))
-                raise Http::ParserError::NotImplemented
-              end
-            else
-              return str
-            end
-          when :headers
-            if (scanner.scan(HeaderLineMatch))
-              header = normalize_header(scanner[1])
-              @headers[header] = scanner[2]
-              @last_header = header
-            elsif (@last_header && scanner.scan(HeaderContinueMatch))
-              @headers[@last_header] << " " << scanner[1]
-            elsif (scanner.scan(HeaderEndMatch))
-              if (has_body?)
-                if (!@headers["CONTENT_LENGTH"])
-                  raise ParserError::LengthRequired
-                end
-                @body_length = @headers["CONTENT_LENGTH"].to_i
-                if (@body_length > 0)
-                  @state = :body
-                else
-                  @state = :done
-                end
-                if (@body_length >= @options[:min_tempfile_size])
-                  @body = @options[:tempfile_class].new("http_parser")
-                  @body.unlink # unlink immediately so we don't rely on the caller to do it.
-                else
-                  @body = StringIO.new
-                end
-              else
-                @state = :done
-              end
-            else
-              return str
-            end
-          when :body
-            remain = @body_length - @body.length
-            addition = str[scanner.pos, remain]
-            @body << addition
-            
-            scanner.pos += addition.length
-
-            if (@body.length >= @body_length)
-              @body.rewind
-              @state = :done
-            end
-            # We either consumed everything we need or we
-            # ran the string dry trying, so we always return the
-            # input string
+        while (!scanner.eos?)
+          start_pos = scanner.pos
+          send(:"parse_#{@state}", scanner)
+          if (scanner.pos == start_pos)
+            # if we didn't move forward, we've run out of useful string so throw it back.
             return str
-          
-          when :done
-            return str # Just ignore any input once a request is done.
           end
         end
       ensure
