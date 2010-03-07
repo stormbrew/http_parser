@@ -227,15 +227,19 @@ REQ
 
   	    it "SHOULD accept (but ignore) a message body on #{method} requests" do
   	      p = parser.new
-  	      p.parse("#{method} / HTTP/1.1\r\n")
-  	      p.parse("Content-Length: 5\r\n")
-  	      p.parse("\r\n")
-  	      p.parse("stuff")
-
-  	      p.done?.should be_true
-  	      p.headers["CONTENT_LENGTH"].should == "5"
-  	      p.body.should_not be_nil
-  	      p.body.read.should == ""
+  	      req = <<REQ
+#{method} / HTTP/1.1\r
+Content-Length: 6\r
+\r
+stuff
+REQ
+          p.parse!(req)
+          
+          p.done?.should be_true
+  	      p.headers["CONTENT_LENGTH"].should == "6"
+  	      p.body.should be_nil
+  	      
+  	      req.should == ""
         end
       end
       
