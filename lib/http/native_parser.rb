@@ -52,7 +52,10 @@ module Http
     # to deal with multiline headers
     HeaderLineMatch = %r{^([a-zA-Z-]+):[ \t]*([[:print:]]+)\r?\n}
     HeaderContinueMatch = %r{^[ \t]+([[:print:]]+)\r?\n}
-    HeaderEndMatch = %r{^\r?\n}
+    EmptyLineMatch = %r{^\r?\n}
+    
+    # Used as a fallback in error detection for a malformed request line or header.
+    AnyLineMatch = %r{^.+?\r?\n}
     
     def initialize(options = DefaultOptions)
       @method = nil
@@ -92,6 +95,10 @@ module Http
         if (!["OPTIONS","GET","HEAD","POST","PUT","DELETE","TRACE","CONNECT"].include?(@method))
           raise Http::ParserError::NotImplemented
         end
+      elsif (scanner.scan(EmptyLineMatch))
+        # ignore an empty line before a request line.
+      elsif (scanner.scan(AnyLineMatch))
+        raise Http::ParserError::BadRequest
       end
     end
     private :parse_request_line
@@ -103,7 +110,7 @@ module Http
         @last_header = header
       elsif (@last_header && scanner.scan(HeaderContinueMatch))
         @headers[@last_header] << " " << scanner[1]
-      elsif (scanner.scan(HeaderEndMatch))
+      elsif (scanner.scan(EmptyLineMatch))
         if (has_body?)
           if (!@headers["CONTENT_LENGTH"])
             raise ParserError::LengthRequired
@@ -123,7 +130,9 @@ module Http
         else
           @state = :done
         end
-      end      
+      elsif (scanner.scan(AnyLineMatch))
+        raise Http::ParserError::BadRequest
+      end  
     end
     private :parse_headers
     
