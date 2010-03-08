@@ -33,10 +33,21 @@ test_parsers.each do |parser|
     	p.headers["COOKIE"].should == "blorp=blah"
   	end
   	
-    it "should raise an error on a malformed version string" do
+    it "should raise an error on a malformed request line" do
       p = parser.new
       proc {
         p.parse("GET / HTTx/balh.blorp\r\n")
+      }.should raise_error(Http::ParserError::BadRequest)
+      proc {
+        p.parse("GET HTTP/1.1\r\n")
+      }.should raise_error(Http::ParserError::BadRequest)
+    end
+    
+    it "should raise an error on a malformed header line" do
+      p = parser.new
+      p.parse("GET / HTTP/1.1\r\n")
+      proc {
+        p.parse("Stuff\r\n")
       }.should raise_error(Http::ParserError::BadRequest)
     end
     
@@ -52,6 +63,106 @@ test_parsers.each do |parser|
     	p.body.read.should == "stuff"
   	end
   	
+  	it "should be able to parse two simple requests from the same string" do
+  	  req = <<REQ
+GET /first HTTP/1.1\r
+Host: blah.com\r
+\r
+GET /second HTTP/1.1\r
+Host: blorp.com\r
+\r
+REQ
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "GET"
+      p.version.should == [1,1]
+      p.path.should == "/first"
+      p.headers["HOST"].should == "blah.com"
+      p.has_body?.should be_false
+      
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "GET"
+      p.version.should == [1,1]
+      p.path.should == "/second"
+      p.headers["HOST"].should == "blorp.com"
+      p.has_body?.should be_false
+    end
+
+  	it "should be able to parse two requests with length-prefixed entities from the same string" do
+  	  req = <<REQ
+POST /first HTTP/1.1\r
+Host: blah.com\r
+Content-Length: 5\r
+\r
+test
+POST /second HTTP/1.1\r
+Host: blorp.com\r
+Content-Length: 5\r
+\r
+haha
+REQ
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "POST"
+      p.version.should == [1,1]
+      p.path.should == "/first"
+      p.headers["HOST"].should == "blah.com"
+      p.body.read.should == "test\n"
+
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "POST"
+      p.version.should == [1,1]
+      p.path.should == "/second"
+      p.headers["HOST"].should == "blorp.com"
+      p.body.read.should == "haha\n"
+    end
+  	
+  	it "should be able to parse two requests with chunked entities from the same string" do
+  	  req = <<REQ
+POST /first HTTP/1.1\r
+Host: blah.com\r
+Transfer-Encoding: chunked\r
+\r
+5\r
+test
+\r
+0\r
+\r
+POST /second HTTP/1.1\r
+Host: blorp.com\r
+Transfer-Encoding: chunked\r
+\r
+5\r
+haha
+\r
+0\r
+\r
+REQ
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "POST"
+      p.version.should == [1,1]
+      p.path.should == "/first"
+      p.headers["HOST"].should == "blah.com"
+      p.body.read.should == "test\n"
+
+      p = parser.new
+      p.parse!(req)
+      p.done?.should be_true
+      p.method.should == "POST"
+      p.version.should == [1,1]
+      p.path.should == "/second"
+      p.headers["HOST"].should == "blorp.com"
+      p.body.read.should == "haha\n"
+    end
+    
   	it "should be able to parse a request with a body defined by Transfer-Encoding: chunked" do
   	  p = parser.new
   	  p.parse(<<REQ)
