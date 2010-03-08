@@ -44,6 +44,19 @@ module Http
       # Must conform to the same interface as the stdlib Tempfile class
       :tempfile_class => Tempfile,
     }
+
+    # Constants for method information
+    MethodInfo = Struct.new(:must_have_body, :can_have_body)
+    Methods = {
+      "OPTIONS" => MethodInfo[false, true],
+      "GET" => MethodInfo[false, false],
+      "HEAD" => MethodInfo[false, false],
+      "POST" => MethodInfo[true, true],
+      "PUT" => MethodInfo[true, true],
+      "DELETE" => MethodInfo[false, false],
+      "TRACE" => MethodInfo[false, false],
+      "CONNECT" => MethodInfo[false, false],
+    }
     
     # Regex used to match the Request-Line
     RequestLineMatch = %r{^([a-zA-Z]+) (.+) HTTP/([0-9]+)\.([0-9]+)\r?\n}
@@ -74,14 +87,14 @@ module Http
     # known at this point in the parse) must have a body.
     # If the method hasn't been determined yet, returns false.
     def must_have_body?
-      ["POST","PUT"].include?(@method)
+      Methods[@method].must_have_body
     end
     
     # Returns true if the http method being parsed (if
     # known at this point in the parse) can have a body.
     # If the method hasn't been determined yet, returns false.
     def can_have_body?
-      ["OPTIONS","POST","PUT"].include?(@method)
+      Methods[@method].can_have_body
     end
     
     # Returns true if the request has a body.
@@ -107,7 +120,7 @@ module Http
     
         @state = :headers
         
-        if (!["OPTIONS","GET","HEAD","POST","PUT","DELETE","TRACE","CONNECT"].include?(@method))
+        if (!Methods[@method])
           raise Http::ParserError::NotImplemented
         end
       elsif (scanner.scan(EmptyLineMatch))
