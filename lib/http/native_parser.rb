@@ -54,6 +54,9 @@ module Http
     HeaderContinueMatch = %r{^[ \t]+([[:print:]]+)\r?\n}
     EmptyLineMatch = %r{^\r?\n}
     
+    # Regex used to match a size specification for a chunked segment
+    ChunkSizeLineMatch = %r{^[0-9]+\r?\n}
+    
     # Used as a fallback in error detection for a malformed request line or header.
     AnyLineMatch = %r{^.+?\r?\n}
     
@@ -68,10 +71,22 @@ module Http
     end
     
     # Returns true if the http method being parsed (if
-    # known at this point in the parse) should have a body.
+    # known at this point in the parse) must have a body.
     # If the method hasn't been determined yet, returns false.
-    def has_body?
+    def must_have_body?
       ["POST","PUT"].include?(@method)
+    end
+    
+    # Returns true if the http method being parsed (if
+    # known at this point in the parse) can have a body.
+    # If the method hasn't been determined yet, returns false.
+    def can_have_body?
+      ["OPTIONS","POST","PUT"].include?(@method)
+    end
+    
+    # Returns true if the request has a body.
+    def has_body?
+      @body
     end
     
     # Takes a string and runs it through the parser. Note that
@@ -111,24 +126,41 @@ module Http
       elsif (@last_header && scanner.scan(HeaderContinueMatch))
         @headers[@last_header] << " " << scanner[1]
       elsif (scanner.scan(EmptyLineMatch))
-        if (has_body?)
-          if (!@headers["CONTENT_LENGTH"])
-            raise ParserError::LengthRequired
+        req_has_body = @headers["CONTENT_LENGTH"] || @headers["TRANSFER_ENCODING"]
+        if (req_has_body)
+          if (@headers["TRANSFER_ENCODING"] && @headers["TRANSFER_ENCODING"] != 'identity')
+            @state = :body_chunked
+            @body_length = 0 # this will get updated as we go.
+            @body_read = 0
+            @chunk_remain = nil
+          elsif (@headers["CONTENT_LENGTH"])
+            @body_length = @headers["CONTENT_LENGTH"].to_i
+            @body_read = 0
+            if (@body_length > 0)
+              @state = :body_identity
+            else
+              @state = :done
+            end
           end
-          @body_length = @headers["CONTENT_LENGTH"].to_i
-          if (@body_length > 0)
-            @state = :body
+          
+          if (can_have_body?)
+            if (@body_length >= @options[:min_tempfile_size])
+              @body = @options[:tempfile_class].new("http_parser")
+              @body.unlink # unlink immediately so we don't rely on the caller to do it.
+            else
+              @body = StringIO.new
+            end
+          else
+            @body = nil
+          end
+        else
+          if (must_have_body?)
+            # we assume it has a body and the client just didn't tell us
+            # how big it was. This is more useful than BadRequest.
+            raise ParserError::LengthRequired
           else
             @state = :done
           end
-          if (@body_length >= @options[:min_tempfile_size])
-            @body = @options[:tempfile_class].new("http_parser")
-            @body.unlink # unlink immediately so we don't rely on the caller to do it.
-          else
-            @body = StringIO.new
-          end
-        else
-          @state = :done
         end
       elsif (scanner.scan(AnyLineMatch))
         raise Http::ParserError::BadRequest
@@ -136,24 +168,80 @@ module Http
     end
     private :parse_headers
     
-    def parse_body(scanner)
-      remain = @body_length - @body.length
+    def parse_body_identity(scanner)
+      remain = @body_length - @body_read
       addition = scanner.string[scanner.pos, remain]
-      @body << addition
-      
       scanner.pos += addition.length
+      @body_read += addition.length
 
-      if (@body.length >= @body_length)
-        @body.rewind
+      @body << addition if @body
+      
+      if (@body_read >= @body_length)
+        @body.rewind if (@body)
         @state = :done
       end
     end
-    private :parse_body
+    private :parse_body_identity
+    
+    def parse_body_chunked(scanner)
+      if (@chunk_remain)
+        if (@chunk_remain > 0)
+          addition = scanner.string[scanner.pos, @chunk_remain]
+          scanner.pos += addition.length
+          @chunk_remain -= addition.length
+          @body_length += addition.length
+        
+          @body << addition if @body
+          
+          if (@body.length >= @options[:min_tempfile_size] && @body.kind_of?(StringIO))
+            @body_str = @body.string
+            @body = @options[:tempfile_class].new("http_parser")
+            @body.unlink # unlink immediately so we don't rely on the caller to do it.
+            @body << @body_str
+          end
+        else
+          if (scanner.scan(EmptyLineMatch))
+            # the chunk is done.
+            @chunk_remain = nil
+          elsif (scanner.scan(AnyLineMatch))
+            # there was a line with stuff in it,
+            # which is invalid here.
+            raise ParserError::BadRequest
+          end
+        end
+      elsif (scanner.scan(ChunkSizeLineMatch))
+        @chunk_remain = scanner[0].to_i
+        if (@chunk_remain < 1)
+          @state = :body_chunked_tail
+        end
+      elsif (scanner.scan(AnyLineMatch))
+        raise ParserError::BadRequest
+      end
+    end
+    private :parse_body_chunked
+    
+    def parse_body_chunked_tail(scanner)
+      # It's not actually clear if tail headers are even
+      # legal in a chunked request entity. The docs seem
+      # to indicate that they should only be sent if the other
+      # end is known to accept them, and there's no way to ensure
+      # that when the client is the originator. As such, we'll
+      # just ignore them for now. We'll do this by ignoring
+      # any line until we hit an empty line, which will be treated
+      # as the end of the entity.
+      if (scanner.scan(EmptyLineMatch))
+        @state = :done
+        @body.rewind
+      elsif (scanner.scan(AnyLineMatch))
+        # ignore the line.
+      end
+    end
+    private :parse_body_chunked_tail
     
     def parse_done(scanner)
       # do nothing, the parse is done.
     end
-    private :parse_body
+    private :parse_done
     
     # Consumes as much of str as it can and then removes it from str. This
     # allows you to iteratively pass data into the parser as it comes from
@@ -188,11 +276,11 @@ module Http
     
     # Returns true if the request has parsed the request-line (GET / HTTP/1.1) 
     def done_request_line?
-      [:headers, :body, :done].include?(@state)
+      [:headers, :body_identity, :body_chunked, :body_chunked_tail, :done].include?(@state)
     end
     # Returns true if all the headers from the request have been consumed.
     def done_headers?
-      [:body, :done].include?(@state)
+      [:body_identity, :body_chunked, :body_chunked_tail, :done].include?(@state)
     end
     # Returns true if the request's body has been consumed (really the same as done?)
     def done_body?

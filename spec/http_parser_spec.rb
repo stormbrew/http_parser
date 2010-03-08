@@ -60,7 +60,7 @@ Host: blah.com\r
 Transfer-Encoding: chunked\r
 \r
 10\r
-stuffstuff
+stuffstuff\r
 0\r
 \r
 REQ
@@ -104,7 +104,7 @@ Transfer-Encoding: chunked\r
 REQ
       1.upto(200) do
         p.parse("10\r\n")
-        p.parse("x"*10)
+        p.parse("x"*10 + "\r\n")
       end
       p.parse("0\r\n\r\n")
       p.done?.should be_true
