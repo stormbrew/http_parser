@@ -134,7 +134,11 @@ module Http
     def parse_headers(scanner)
       if (scanner.scan(HeaderLineMatch))
         header = normalize_header(scanner[1])
-        @headers[header] = scanner[2]
+        if (@headers[header])
+          @headers[header] << "," << scanner[2]
+        else
+          @headers[header] = scanner[2]
+        end
         @last_header = header
       elsif (@last_header && scanner.scan(HeaderContinueMatch))
         @headers[@last_header] << " " << scanner[1]
