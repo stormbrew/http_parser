@@ -163,7 +163,7 @@ module Http
           if (can_have_body?)
             if (@body_length >= @options[:min_tempfile_size])
               @body = @options[:tempfile_class].new("http_parser")
-              @body.unlink # unlink immediately so we don't rely on the caller to do it.
+              File.unlink(@body.to_path) rescue nil # ruby 1.9.1 does Tempfile.unlink wrong, so we do it ourselves.
             else
               @body = StringIO.new
             end
@@ -213,7 +213,7 @@ module Http
           if (@body.length >= @options[:min_tempfile_size] && @body.kind_of?(StringIO))
             @body_str = @body.string
             @body = @options[:tempfile_class].new("http_parser")
-            @body.unlink # unlink immediately so we don't rely on the caller to do it.
+            File.unlink(@body.to_path) rescue nil # ruby 1.9.1 does Tempfile.unlink wrong, so we do it ourselves.
             @body << @body_str
           end
         else
