@@ -72,7 +72,7 @@ module Http
     
     # Used as a fallback in error detection for a malformed request line or header.
     AnyLineMatch = %r{^.+?\r?\n}
-    
+        
     def initialize(options = DefaultOptions)
       @method = nil
       @path = nil
@@ -285,6 +285,28 @@ module Http
       str.upcase.gsub('-', '_')
     end
     private :normalize_header
+    
+    # Given a basic rack environment, will properly fill it in
+    # with the information gleaned from the parsed request. Note that
+    # this only fills the subset that can be determined by the parser
+    # library. Namely, the only rack. variable set is rack.input. You should also
+    # have defaults in place for SERVER_NAME and SERVER_PORT, as they
+    # are required.
+    def fill_rack_env(env = {})
+      env["rack.input"] = @body || StringIO.new
+      env["REQUEST_METHOD"] = @method
+      env["SCRIPT_NAME"] = ""
+      env["PATH_INFO"], query = @path.split("?", 2)
+      env["QUERY_STRING"] = query || ""
+      if (@headers["HOST"] && !env["SERVER_NAME"])
+        env["SERVER_NAME"], port = @headers["HOST"].split(":", 2)
+        env["SERVER_PORT"] = port if port
+      end
+      @headers.each do |key, val|
+        env["HTTP_#{key}"] = val
+      end
+      return env
+    end
     
     # Returns true if the request is completely done.
     def done?
