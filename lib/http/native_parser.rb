@@ -63,8 +63,8 @@ module Http
     # Regex used to match a header line. Lines suspected of
     # being headers are also checked against the HeaderContinueMatch
     # to deal with multiline headers
-    HeaderLineMatch = %r{^([a-zA-Z-]+):[ \t]*([[:print:]]+)\r?\n}
-    HeaderContinueMatch = %r{^[ \t]+([[:print:]]+)\r?\n}
+    HeaderLineMatch = %r{^([a-zA-Z-]+):[ \t]*([[:print:]]+?)\r?\n}
+    HeaderContinueMatch = %r{^[ \t]+([[:print:]]+?)\r?\n}
     EmptyLineMatch = %r{^\r?\n}
     
     # Regex used to match a size specification for a chunked segment
