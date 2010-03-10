@@ -63,6 +63,57 @@ test_parsers.each do |parser|
     	p.body.read.should == "stuff"
   	end
   	
+  	describe "fill_rack_env" do
+  	  it "should fill in a simple request correctly" do
+  	    p = parser.new
+  	    p.parse("GET /blah HTTP/1.1\r\nHost: blorp\r\n\r\n")
+  	    p.done?.should be_true
+  	    env = p.fill_rack_env
+  	    env["rack.input"].should be_kind_of(StringIO)
+  	    env["REQUEST_METHOD"].should == "GET"
+  	    env["SCRIPT_NAME"].should == ""
+  	    env["PATH_INFO"].should == "/blah"
+  	    env["QUERY_STRING"].should == ""
+  	    env["SERVER_NAME"].should == "blorp"
+  	    env["SERVER_PORT"].should be_nil
+  	    env["HTTP_HOST"].should == "blorp"
+	    end
+	    
+	    it "should split the query string from the request uri" do
+	      p = parser.new
+	      p.parse("GET /blah?blorp HTTP/1.1\r\nHost: blorp\r\n\r\n")
+	      p.done?.should be_true
+	      env = p.fill_rack_env
+	      env["PATH_INFO"].should == "/blah"
+	      env["QUERY_STRING"].should == "blorp"
+      end
+      it "should split the query string from the path only once" do
+        p = parser.new
+        p.parse("GET /blah?blorp?bloop HTTP/1.1\r\nHost:blorp\r\n\r\n")
+        p.done?.should be_true
+        env = p.fill_rack_env
+        env["PATH_INFO"].should == "/blah"
+        env["QUERY_STRING"].should == "blorp?bloop"
+      end
+      
+      it "should split the host from the port when doing SERVER_NAME/SERVER_PORT" do
+        p = parser.new
+        p.parse("GET /blah HTTP/1.1\r\nHost: blorp.com:1234\r\n\r\n")
+        p.done?.should be_true
+        env = p.fill_rack_env
+        env["SERVER_NAME"].should == "blorp.com"
+        env["SERVER_PORT"].should == "1234"
+      end
+      
+      it "should not fill in SERVER_NAME and SERVER_PORT if SERVER_NAME is already set" do
+        p = parser.new
+        p.parse("GET /blah HTTP/1.1\r\nHost: blah.com:324\r\n\r\n")
+        p.done?.should be_true
+        env = p.fill_rack_env({"SERVER_NAME"=>"woop.com"})
+        env["SERVER_NAME"].should == "woop.com"
+      end
+    end
+
   	it "should be able to parse two simple requests from the same string" do
   	  req = <<REQ
 GET /first HTTP/1.1\r
