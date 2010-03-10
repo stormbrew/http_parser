@@ -68,7 +68,7 @@ module Http
     EmptyLineMatch = %r{^\r?\n}
     
     # Regex used to match a size specification for a chunked segment
-    ChunkSizeLineMatch = %r{^[0-9]+\r?\n}
+    ChunkSizeLineMatch = %r{^[0-9a-fA-F]+\r?\n}
     
     # Used as a fallback in error detection for a malformed request line or header.
     AnyLineMatch = %r{^.+?\r?\n}
@@ -227,7 +227,7 @@ module Http
           end
         end
       elsif (scanner.scan(ChunkSizeLineMatch))
-        @chunk_remain = scanner[0].to_i
+        @chunk_remain = scanner[0].to_i(16)
         if (@chunk_remain < 1)
           @state = :body_chunked_tail
         end

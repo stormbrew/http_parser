@@ -170,7 +170,7 @@ POST / HTTP/1.1\r
 Host: blah.com\r
 Transfer-Encoding: chunked\r
 \r
-10\r
+A\r
 stuffstuff\r
 0\r
 \r
@@ -214,7 +214,7 @@ Transfer-Encoding: chunked\r
 \r
 REQ
       1.upto(200) do
-        p.parse("10\r\n")
+        p.parse("A\r\n")
         p.parse("x"*10 + "\r\n")
       end
       p.parse("0\r\n\r\n")
@@ -405,7 +405,7 @@ POST / HTTP/1.1\r
 Content-Length: 5
 Transfer-Encoding: chunked
 
-10
+A
 stuffstuff
 0
 
