@@ -80,6 +80,17 @@ test_parsers.each do |parser|
   	    env["HTTP_HOST"].should == "blorp"
 	    end
 	    
+      it "should give Content-Type and Content-Length as CONTENT_* rather than HTTP_CONTENT_*" do
+        p = parser.new
+        p.parse("POST /blah HTTP/1.1\r\nContent-Type: text/text\r\nContent-Length: 4\r\n\r\ntest")
+        p.done?.should be_true
+        env = p.fill_rack_env
+        env["CONTENT_LENGTH"].should == "4"
+        env["CONTENT_TYPE"].should == "text/text"
+        env["HTTP_CONTENT_LENGTH"].should be_nil
+        env["HTTP_CONTENT_TYPE"].should be_nil
+      end
+
 	    it "should split the query string from the request uri" do
 	      p = parser.new
 	      p.parse("GET /blah?blorp HTTP/1.1\r\nHost: blorp\r\n\r\n")
