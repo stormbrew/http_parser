@@ -72,6 +72,7 @@ test_parsers.each do |parser|
   	    env["rack.input"].should be_kind_of(StringIO)
   	    env["REQUEST_METHOD"].should == "GET"
   	    env["SCRIPT_NAME"].should == ""
+  	    env["REQUEST_URI"].should == "/blah"
   	    env["PATH_INFO"].should == "/blah"
   	    env["QUERY_STRING"].should == ""
   	    env["SERVER_NAME"].should == "blorp"
@@ -84,6 +85,7 @@ test_parsers.each do |parser|
 	      p.parse("GET /blah?blorp HTTP/1.1\r\nHost: blorp\r\n\r\n")
 	      p.done?.should be_true
 	      env = p.fill_rack_env
+	      env["REQUEST_URI"].should == "/blah?blorp"
 	      env["PATH_INFO"].should == "/blah"
 	      env["QUERY_STRING"].should == "blorp"
       end
@@ -92,6 +94,7 @@ test_parsers.each do |parser|
         p.parse("GET /blah?blorp?bloop HTTP/1.1\r\nHost:blorp\r\n\r\n")
         p.done?.should be_true
         env = p.fill_rack_env
+        env["REQUEST_URI"].should == "/blah?blorp?bloop"
         env["PATH_INFO"].should == "/blah"
         env["QUERY_STRING"].should == "blorp?bloop"
       end

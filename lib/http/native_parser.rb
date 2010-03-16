@@ -296,6 +296,7 @@ module Http
       env["rack.input"] = @body || StringIO.new
       env["REQUEST_METHOD"] = @method
       env["SCRIPT_NAME"] = ""
+      env["REQUEST_URI"] = @path
       env["PATH_INFO"], query = @path.split("?", 2)
       env["QUERY_STRING"] = query || ""
       if (@headers["HOST"] && !env["SERVER_NAME"])
