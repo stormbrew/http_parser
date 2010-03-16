@@ -304,7 +304,11 @@ module Http
         env["SERVER_PORT"] = port if port
       end
       @headers.each do |key, val|
-        env["HTTP_#{key}"] = val
+        if (key == 'CONTENT_LENGTH' || key == 'CONTENT_TYPE')
+          env[key] = val
+        else
+          env["HTTP_#{key}"] = val
+        end
       end
       return env
     end
